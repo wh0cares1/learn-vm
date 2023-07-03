@@ -1,0 +1,14 @@
+{
+  "ExpandedNodes": [
+    "",
+    "\\src",
+    "\\src\\bytecode",
+    "\\src\\compiler",
+    "\\src\\disassembler",
+    "\\src\\gc",
+    "\\src\\parser",
+    "\\src\\vm"
+  ],
+  "SelectedNode": "\\src\\vm\\EvaValue.h",
+  "PreviewInSolutionExplorer": false
+}

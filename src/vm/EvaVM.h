@@ -34,7 +34,7 @@ using syntax::EvaParser;
  * Reads the current byte in the bytecode
  * and advances the ip pointer.
  */
-#define READ_BYTE()  // Implement here...
+#define READ_BYTE()  *ip++
 
 /**
  * Reads a short word (2 bytes).
@@ -112,14 +112,22 @@ class EvaVM {
    * Pushes a value onto the stack.
    */
   void push(const EvaValue& value) {
-    // Implement here...
+      if ((size_t)(sp - stack.begin()) == STACK_LIMIT) {
+          DIE << "push(): stack overflow.\n";
+      }
+      *sp = value;
+      sp++;
   }
 
   /**
    * Pops a value from the stack.
    */
   EvaValue pop() {
-    // Implement here...
+      if (sp == stack.begin()) {
+          DIE << "pop(): empty stack.\n";
+      }
+      --sp;
+      return *sp;
   }
 
   /**
@@ -207,7 +215,16 @@ class EvaVM {
    */
   EvaValue eval() {
     for (;;) {
-      // Implement here...
+        switch (READ_BYTE()) {
+            case OP_HALT;
+                return pop();
+            case OP_CONST;
+                push(GET_CONST());
+                break();
+
+            default:
+                DIE << "Unkown Opcode : " << std::hex << opcode;
+      }
     }
   }
 
