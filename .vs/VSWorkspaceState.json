@@ -9,6 +9,6 @@
     "\\src\\parser",
     "\\src\\vm"
   ],
-  "SelectedNode": "\\src\\vm\\EvaValue.h",
+  "SelectedNode": "\\src\\compiler\\EvaCompiler.h",
   "PreviewInSolutionExplorer": false
 }

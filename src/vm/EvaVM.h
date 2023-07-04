@@ -69,7 +69,12 @@ using syntax::EvaParser;
 /**
  * Binary operation.
  */
-#define BINARY_OP(op)  // Implement here...
+#define BINARY_OP(op)               \
+do {                                \
+    auto op2 = AS_NUMBER(pop());    \
+    auto op1 = AS_NUMBER(pop());    \
+    push(NUMBER(op1 op op2));       \
+} while(false)
 
 /**
  * Generic values comparison.
@@ -221,7 +226,18 @@ class EvaVM {
             case OP_CONST;
                 push(GET_CONST());
                 break();
-
+            case OP_ADD;
+                BINARY_OP(+);
+                break;
+            case OP_SUB;
+                BINARY_OP(-);
+                break;
+            case OP_MUL;
+                BINARY_OP(*);
+                break;
+            case OP_DIV;
+                BINARY_OP(/);
+                break;
             default:
                 DIE << "Unkown Opcode : " << std::hex << opcode;
       }

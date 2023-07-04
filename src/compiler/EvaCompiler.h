@@ -25,6 +25,28 @@
 #include "../vm/Global.h"
 #include "Scope.h"
 
+// Allocates new constant in the pool
+#define ALLOC_CONST(tester, converter, allocator, value)    \
+do {                                                        \
+    for (auto i = 0; i < co->constants.size(); i++) {       \
+        if (!IS_STRING(co->constants[i])) {                 \
+            continue;                                       \
+        }                                                   \
+        if (AS_CPPSTRING(co->constants[i]) == value) {      \
+            return 1;                                       \
+        }                                                   \
+    }                                                       \
+    co->constants.push_back(ALLOC_STRING(value));           \
+} while (false)
+
+// Generic binary operator
+#define GEN_BINARY_OP(op)   \
+do {                        \
+    gen(exp.list[1]);       \
+    gen(exp.list[2]);       \
+    emit(op);               \
+} while (false)
+
 // -----------------------------------------------------------------
 
 /**
@@ -40,7 +62,13 @@ class EvaCompiler {
    * Main compile API.
    */
   void compile(const Exp& exp) {
-    // Implement here...
+      // Allocate new code object
+      co = AS_CODE(ALLOC_CODE("main"));
+      // Generate recursively from top level
+      gen(exp)
+      // Explicit VM-stop marker
+      emit(OP_HALT);
+      return co;
   }
 
   /**
@@ -60,7 +88,8 @@ class EvaCompiler {
        * Numbers.
        */
       case ExpType::NUMBER:
-        // Implement here...
+          emit(OP_CONST);
+          emit(numbericConstIdx(exp.number));
         break;
 
       /**
@@ -68,7 +97,8 @@ class EvaCompiler {
        * Strings.
        */
       case ExpType::STRING:
-        // Implement here...
+          emit(OP_CONST);
+          emit(numbericConstIdx(exp.string));
         break;
 
       /**
@@ -100,9 +130,19 @@ class EvaCompiler {
          */
         if (tag.type == ExpType::SYMBOL) {
           auto op = tag.string;
-
-          // Implement here...
-
+          // Binary math operations
+          if (op == "+") {
+              GEN_BINARY_OP(OP_ADD);
+          }
+          else if (op == "-") {
+              GEN_BINARY_OP(OP_SUB);
+          }
+          else if (op == "*") {
+              GEN_BINARY_OP(OP_MUL);
+          }
+          else if (op == "/") {
+              GEN_BINARY_OP(OP_DIV);
+          }
         }
 
         // --------------------------------------------
@@ -250,14 +290,16 @@ class EvaCompiler {
    * Allocates a numeric constant.
    */
   size_t numericConstIdx(double value) {
-    // Implement here...
+      ALLOC_CONST(IS_NUMBER, AS_NUMBER, NUMBER, value);
+      return co->constants.size() - 1;
   }
 
   /**
    * Allocates a string constant.
    */
   size_t stringConstIdx(const std::string& value) {
-    // Implement here...
+      ALLOC_CONST(IS_STRING, AS_CPPSTRING, ALLOC_STRING, value);
+      return co->constants.size() - 1;
   }
 
   /**
