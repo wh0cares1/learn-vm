@@ -34,50 +34,115 @@ class EvaDisassembler {
    * Disassembles a code unit.
    */
   void disassemble(CodeObject* co) {
-    // Implement here...
+      std::cout << "\n---------- Disassembly: " << co->name
+                << " ----------\n\n";
+      size_t offset = 0;
+      while (offset < co->code.size()) {
+          offset = dissassembleInstruction(co, offset);
+          std::cout << "\n";
+      }
   }
 
  private:
   /**
+  * Dissasembler
+  */
+  std::unique_ptr<EvaDisassembler> disassembler;
+  
+  /**
    * Disassembles individual instruction.
    */
   size_t disassembleInstruction(CodeObject* co, size_t offset) {
-    // Implement here...
+      std::ios_base::fmtflags f(std::cout.flags());
+      // Print bytecode offset
+      std::cout << std::uppercase << std::hex << std::setfill('0') << std::right
+          << std::setw(4) << offset << "     ";
+      auto opcode = co->code[offset];
+      switch (opcode) {
+        case OP_HALT:
+        case OP_ADD:
+        case OP_SUB:
+        case OP_MUL:
+        case OP_DIV:
+        case OP_POP:
+          return disassembleSimple(co, opcode, offset);
+        case OP_SCOPE_EXIT:
+          return disassembleWord(co, opcode, offset);
+        case OP_CONST:
+          return disassembleConst(co, opcode, offset);
+        case OP_COMPARE:
+          return disassembleCompare(co, opcode, offset);
+        case OP_JMP_IF_FALSE:
+        case OP_JMP:
+          return disassembleJump(co, opcode, offset);
+        case OP_GET_GLOBAL:
+        case OP_SET_GLOBAL:
+            return disassembleGlobal(co, opcode, offset);
+        case OP_GET_LOCAL:
+        case OP_SET_LOCAL:
+            return disassembleLocal(co, opcode, offset);
+        default:
+            DIE << "disassembleInstruction: no disassemble for "
+                << opcodeToString(opcode);
+      }
+
+      std::cout.flags(f);
+      return 0; // Unreachable
   }
 
   /**
    * Disassembles simple instruction.
    */
   size_t disassembleSimple(CodeObject* co, uint8_t opcode, size_t offset) {
-    // Implement here...
+      dumpBytes(co, offset, 1);
+      printOpCode(opcode);
+      return offset + 1;
   }
 
   /**
    * Disassembles a word.
    */
   size_t disassembleWord(CodeObject* co, uint8_t opcode, size_t offset) {
-    // Implement here...
+      dumpBytes(co, offset, 2);
+      printOpCode(opcode);
+      std::cout << (int)co->code[offset + 1];
+      return offset + 2;
   }
 
   /**
    * Disassembles const instruction: OP_CONST <index>
    */
   size_t disassembleConst(CodeObject* co, uint8_t opcode, size_t offset) {
-    // Implement here...
+      dumpBytes(co, offset, 2);
+      printOpCode(opcode);
+      auto constIndex = co->code[offset + 1];
+      std::cout << (int)constIndex << " ("
+          << evaValueToConstantString(co->constants[constIndex]) << ")";
+      return offset + 2;
   }
 
   /**
    * Disassembles global variable instruction.
    */
   size_t disassembleGlobal(CodeObject* co, uint8_t opcode, size_t offset) {
-    // Implement here...
+      dumpBytes(co, offset, 2);
+      printOpCode(opcode);
+      auto globalIndex = co->code[offset + 1];
+      std::cout << (int)globalIndex << " ("
+          << global->get(globalIndex).name << ")";
+      return offset + 2;
   }
 
   /**
    * Disassembles local variable instruction.
    */
   size_t disassembleLocal(CodeObject* co, uint8_t opcode, size_t offset) {
-    // Implement here...
+      dumpBytes(co, offset, 2);
+      printOpCode(opcode);
+      auto localIndex = co->code[offset + 1];
+      std::cout << (int)localIndex << " ("
+          << co->locals[localIndex].name << ")";
+      return offset + 2;
   }
 
   /**
@@ -106,7 +171,14 @@ class EvaDisassembler {
    * Dumps raw memory from the bytecode.
    */
   void dumpBytes(CodeObject* co, size_t offset, size_t count) {
-    // Implement here...
+      std::ios_base::fmtflags f(std::cout.flags());
+      std::stringstream ss;
+      for (suto i = 0; i < count; i++) {
+          ss << std::uppercase << std::hex << std::setfill('0') << std::setw(2)
+              << (((int)co->code[offset + 1]) & 0xFF) << " ";
+      }
+      std::cout << std::left << std::setfill(' ') << std::setw(12) << ss.str();
+      std::cout.flags(f);
   }
 
   /**
@@ -115,20 +187,33 @@ class EvaDisassembler {
   void printOpCode(uint8_t opcode) {
     std::cout << std::left << std::setfill(' ') << std::setw(20)
               << opcodeToString(opcode) << " ";
+    std::cout.flags(f);
   }
 
   /**
    * Disassembles compare instruction.
    */
   size_t disassembleCompare(CodeObject* co, uint8_t opcode, size_t offset) {
-    // Implement here...
+      dumpBytes(co, offset, 2);
+      printOpCode(opcode);
+      auto compareOP = co->code[offset + 1];
+      std::cout << (int)compareOp << " (";
+      std::cout << inverseCompareOps_[compareOp] << ")";
+      return offset + 2;
   }
 
   /**
    * Disassembles conditional jump.
    */
   size_t disassembleJump(CodeObject* co, uint8_t opcode, size_t offset) {
-    // Implement here...
+      std::ios_base::fmtflags f(std::cout.flags());
+      dumpBytes(co, offset, 3);
+      printOpCode(opcode);
+      uint16_t address = readWordAtOffset(co, offset + 1);
+      std::cout << std::uppercase << std::hex << std::setfill('0') << std::right
+                << std::setw(4) << (int)address << " ";
+      std::cout.flags(f);
+      return offset + 3; // Instruction + 2 bytes address
   }
 
   /**

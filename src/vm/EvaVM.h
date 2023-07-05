@@ -39,7 +39,7 @@ using syntax::EvaParser;
 /**
  * Reads a short word (2 bytes).
  */
-#define READ_SHORT()  // Implement here...
+#define READ_SHORT()  (ip += 2, (uint16_t)((ip[-2] << 8)) | ip[-1])
 
 /**
  * Converts bytecode index to a pointer.
@@ -79,7 +79,31 @@ do {                                \
 /**
  * Generic values comparison.
  */
-#define COMPARE_VALUES(op, v1, v2)  // Implement here...
+#define COMPARE_VALUES(op, v1, v2)  \
+do {                                \
+    bool res;                       \
+    switch (op) {                   \
+    case 0:                         \
+        res = v1 < v2;              \
+        break;                      \
+    case 1:                         \
+        res = v1 > v2;              \
+        break;                      \
+    case 2:                         \
+        res = v1 == v2;             \
+        break;                      \
+    case 3:                         \
+        res = v1 >= v2;             \
+        break;                      \
+    case 4:                         \
+        res = v1 <= v2;             \
+        break;                      \
+    case 5:                         \
+        res = v1 != v2;             \
+        break;                      \
+    }                               \
+    push(BOOLEAN(res))              \
+} while (false)
 
 // --------------------------------------------------
 
@@ -139,14 +163,20 @@ class EvaVM {
    * Peeks an element from the stack.
    */
   EvaValue peek(size_t offset = 0) {
-    // Implement here...
+      if (stack.size() == 0) {
+          DIE << "peek(): empty stack.\n";
+      }
+      return *(sp - 1 - offset);
   }
 
   /**
    * Pops multiple values from the stack.
    */
   void popN(size_t count) {
-    // Implement here...
+      if (stack.size() == 0) {
+          DIE << "popN(): empty stack.\n";
+      }
+      sp -= count;
   }
 
   //----------------------------------------------------
@@ -212,6 +242,9 @@ class EvaVM {
     // Init the base (frame) pointer:
     bp = sp;
 
+    // Debug disassembly:
+    compiler->disassembleBytecode();
+
     return eval();
   }
 
@@ -238,8 +271,79 @@ class EvaVM {
             case OP_DIV;
                 BINARY_OP(/);
                 break;
+            case OP_COMPARE: {
+                auto op = READ_BYTE();
+                auto op2 = pop();
+                auto op1 = pop();
+                if (IS_NUMBER(op1) && IS_NUMBER(op2)) {
+                    auto v1 = AS_NUMBER(op1);
+                    auto v2 = AS_NUMBER(op2);
+                    COMPARE_VALUES(op, v1, v2);
+                } else if (IS_STRING(op1) && IS_STRING(op2)) {
+                    auto s1 = AS_STRING(op1);
+                    auto s2 = AS_STRING(op2);
+                    COMPARE_VALUES(op, s1, s2);
+                }
+            }
+            case OP_JMP_IF_FALSE: {
+                auto cond = AS_BOOLEAN(pop());
+                auto address = READ_SHORT();
+                if (!cond) {
+                    ip = TO_ADDRESS(address);
+                }
+                break;
+            }
+            // Unconditional Jump
+            case OP_JMP: {
+                ip = TO_ADDRESS(READ_SHORT());
+                break;
+            }
+            
+            // Global variable value
+            case OP_GET_GLOBAL: {
+                auto globalIndex = READ_BYTE();
+                push(global->get(globalIndex).value);
+                break;
+            }
+            case OP_SET_GLOBAL: {
+                auto globalIndex = READ_BYTE();
+                auto value = peek(0);
+                global->set(globalIndex, value);
+                break;
+            }
+            // Stack manipulation
+            case OP_POP:
+                pop();
+                break;
+            // Local variable value
+            case OP_GET_GLOBAL: {
+                auto localIndex = READ_BYTE();
+                if (localIndex < 0 || localIndex >= stack.size()) {
+                    DIE << "OP_GET_LOCAL: invalid variable index: " << (int)localIndex;
+                }
+                push(bp[localIndex]);
+                break;
+            }
+            case OP_SET_LOCAL: {
+                auto localIndex = READ_BYTE();
+                auto value = peek(0);
+                if (localIndex < 0 || localIndex >= stack.size()) {
+                    DIE << "OP_GET_LOCAL: invalid variable index: " << (int)localIndex;
+                }
+                bp[localIndex] = value;
+                break;
+            }
+            case OP_SCOPE_EXIT: {
+                // How many vars to pop
+                auto count = READ_BYTE();
+                // Move the result above the vars
+                *(sp - 1 - count) = peek(0);
+                // Pop the vars
+                popN(count);
+                break;
+            }
             default:
-                DIE << "Unkown Opcode : " << std::hex << opcode;
+                DIE << "Unkown Opcode: " << std::hex << opcode;
       }
     }
   }
@@ -248,7 +352,8 @@ class EvaVM {
    * Sets up global variables and function.
    */
   void setGlobalVariables() {
-    // Implement here...
+      global->addConst("x", 10);
+      global->addConst("y", 20);
   }
 
   /**

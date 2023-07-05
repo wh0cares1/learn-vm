@@ -173,7 +173,8 @@ struct InstanceObject : public Object {
 // ----------------------------------------------------------------
 
 struct LocalVar {
-  // Implement here...
+    std::string name;
+    size_t scopeLevel;
 };
 
 /**
@@ -190,6 +191,25 @@ struct CodeObject : public Object {
     std::vector<EvaValue> constants;
     // Bytecode
     std::vector<uint8_t> code;
+    // Current scope level
+    size_t scopeLevel = 0;
+    // Local variables and functions
+    std::vector<LocalVar> locals;
+    // Adds a local with current scope level
+    void addLocal(const std::string& name) {
+        locals.push_back({ name, scopeLevel });
+    }
+    // Get global index
+    int getLocalIndex(const std::string& name) {
+        if (locals.size() > 0) {
+            for (auto i = (int)locals.size() - 1; i >= 0; i--) {
+                if (locals[i].name == name) {
+                    return i;
+                }
+            }
+        }
+        return -1;
+    }
 };
 
 // ----------------------------------------------------------------
@@ -216,6 +236,7 @@ struct FunctionObject : public Object {
 // Constructors:
 
 #define NUMBER(value) ((EvaValue){EvaValueType::NUMBER, .number = value})
+#define BOOLEAN(value) ((EvaValue){EvaValueType::BOOLEAN, .boolean = value})
 
 #define ALLOC_STRING(value) ((EvaValue){EvaValueType::OBJECT, .object = (Object*) new StringObhect(value)})
 
@@ -225,6 +246,7 @@ struct FunctionObject : public Object {
 // Accessors:
 
 #define AS_NUMBER(evaValue) ((double)(evaValue).number)
+#define AS_BOOLEAN(evaValue) ((bool)(evaValue).boolean)
 #define AS_OBJECT(evaValue) ((Object*)(evaValue).object)
 #define AS_STRING(evaValue) ((StringObject*)(evaValue).object)
 #define AS_CPPSTRING(evaValue) (AS_STRING(evaValue)->string)
@@ -234,6 +256,7 @@ struct FunctionObject : public Object {
 // Testers:
 
 #define IS_NUMBER(evaValue) ((evaValue).type == EvaValueType::NUMBER)
+#define IS_BOOLEAN(evaValue) ((evaValue).type == EvaValueType::BOOLEAN)
 #define IS_NUMBER(evaValue) ((evaValue).type == EvaValueType::OBJECT)
 #define IS_OBJECT_TYPE(evaValue, objectType) IS_OBJECT(evaValue) && AS_OBJECT(evaValue)->type == objectType
 #define IS_STRING(evaValue) IS_OBJECT_TYPE(evaValue, ObjectType::STRING)
@@ -247,6 +270,8 @@ struct FunctionObject : public Object {
 std::string evaValueToTypeString(const EvaValue& evaValue) {
   if (IS_NUMBER(evaValue)) {
       return "NUMBER";
+  } else if (IS_BOOLEAN(evaValue)) {
+      return "BOOLEAN";
   } else if (IS_STRING(evaValue)) {
       return "STRING";
   } else if (IS_CODE(evaValue)) {
@@ -264,6 +289,9 @@ std::string evaValueToConstantString(const EvaValue& evaValue) {
     std::stringstream ss;
     if (IS_NUMBER(evaValue)) {
         ss << evaValue.number;
+    }
+    else if (IS_BOOLEAN(evaValue)) {
+        ss << (evaValue.boolean == true ? "true" : "false");
     }
     else if (IS_STRING(evaValue)) {
         ss << '"' << AS_CPPSTRING(evaValue) << '"';

@@ -110,10 +110,25 @@ class EvaCompiler {
          * Boolean.
          */
         if (exp.string == "true" || exp.string == "false") {
-          // Implement here...
+            emit(OP_CONST);
+            emit(booleanConstIdx(exp.string == "true" ? true : false));
         } else {
           // Variables:
-          // Implement here...
+          auto varName = exp.string;
+          // 1. Local vars
+          auto localIndex = co->getLocalIndex(varName);
+          if (localIndex != -1) {
+              emit(OP_GET_LOCAL);
+              emit(localIndex);
+          }
+          // 2. Global vars
+          else {
+              if (!global->exists(varName)) {
+                  DIE << "[EvaCompiler]: Reference error: " << varName;
+              }
+              emit(OP_GET_GLOBAL);
+              emit(global->getGlobalIndex(varName));
+          }
         }
         break;
 
@@ -142,6 +157,129 @@ class EvaCompiler {
           }
           else if (op == "/") {
               GEN_BINARY_OP(OP_DIV);
+          }
+          else if (compareOps_.count(op) != 0) {
+              gen(exp.list[1]);
+              gen(exp.list[2]);
+              emit(OP_COMPARE);
+              emit(compareOps_[op]);
+          }
+          /*
+          * (if <test> <consequent> <alternate>)
+          */
+          else if (op == "if") {
+              gen(exp.list[1]);
+
+              // ELse branch. Init with 0 address, will be patched.
+              emit(OP_JMP_IF_FALSE);
+
+              // NOTE: we use 2-byte addresses:
+              emit(0);
+              emit(0);
+
+              auto endAddr = getOffset() - 2;
+
+              // Emit <consequent>
+              gen(exp.list[2]);
+              emit(OP_JMP);
+
+              // NOTE: we use 2-byte addresses:
+              emit(0);
+              emit(0);
+
+              auto endAddr = getOffset() - 2;
+
+              // Patch the else branch address
+              auto elseBranchAddr = getOffset();
+              patchJumpAddress(elseJmpAddr, elseBranchAddr);
+
+              // Emit <alternate> if we have it
+              if (exp.list.size() == 4) {
+                  gen(exp.list[3]);
+              }
+
+              // Patch the end
+              auto endBranchAddr = getOffset();
+              patchJumpAddress(endAddr, endBranchAddr);
+          }
+          else if (op == "while") {
+              auto loopStartAddr = getOffset();
+
+              gen(exp.list[1]);
+              // Loop end. Init with 0 address, will be patched
+              emit(OP_JMP_IF_FALSE);
+              // 2-byte addresses
+              emit(0);
+              emit(0);
+              auto loopEndJmpAddr = getOffset() - 2;
+              // Emit <body>
+              gen(exp.list[2]);
+              // Goto loop start
+              emit(OP_JMP);
+              emit(0);
+              emit(0);
+              patchJumpAddress(getOffset() - 2, loopStartAddr);
+              // Patch the end
+              auto loopEndAddr = getOffset() + 1;
+              patchJumpAddress(loopEndJmpAddr, loopEndAddr);
+          }
+          else if (op == "var") {
+              auto varName = exp.list[1].string;
+              // Initializer
+              gen(exp.list[2]);
+              // 1. Global vars
+              if (isGlobalScope()){
+                  global->define(varName);
+                  emit(OP_SET_GLOBAL);
+                  emit(global->getGlobalIndex(varName));
+              }
+              // 2. Local vars :
+              else {
+                  co->addLocal(varName);
+                  emit(OP_SET_LOCAL);
+                  emit(co->getLocalIndex(varName));
+              }
+          }
+          else if (op == "set") {
+              auto varName = exp.list[1].string;
+              
+              // Initializer
+              gen(exp.list[2]);
+
+              // 1. Local vars
+              auto localIndex = co->getLocalIndex(varName);
+
+              if (localIndex != -1) {
+                  emit(OP_SET_LOCAL);
+                  emit(localIndex);
+              }
+              // 2. Global vars
+              else {
+                  auto globalIndex = global->getGlobalIndex(varName);
+                  if (globalIndex == -1) {
+                      DIE << "Reference error: " << varName << " is not defined."
+                  }
+                  emit(OP_SET_GLOBAL);
+                  emit(globalIndex);
+              }
+          }
+          // Blocks
+          else if (op == "begin") {
+              scopeEnter();
+              // Compile each expression within the block
+              for (auto i = 1; i < exp.list.size(); i++) {
+                  // The value of last expression is kept on the stack as the final result
+                  bool isLast = i == exp.list.size() - 1;
+                  // Local variable or function (should not pop)
+                  auto isLocalDeclaration =
+                      isDeclaration(exp.list[i]) && !isGlobalScope();
+                  // Generate expression code
+                  gen(exp.list[i]);
+                  if (!isLast && !isLocalDeclaration) {
+                      emit(OP_POP);
+                  }
+              }
+              scopeExit();
           }
         }
 
@@ -187,6 +325,24 @@ class EvaCompiler {
    * Disassembler.
    */
   std::unique_ptr<EvaDisassembler> disassembler;
+
+  /**
+  * Enters a new scope
+  */
+  void scopeEnter() { co->scopeLevel++;  }
+
+  /**
+  * Exits a new scope
+  */
+  void scopeExit() { 
+      // Pop vars from the stack if they were declared within this specific scope.
+      auto varsCount = getVarsCountOnScopeExit();
+      if (varsCount > 0) {
+          emit(OP_SCOPE_EXIT);
+          emit(varsCount);
+      }
+      co->scopeLevel--; 
+  }
 
   /**
    * Compiles a function.
@@ -278,7 +434,14 @@ class EvaCompiler {
    * returns number of vars used.
    */
   size_t getVarsCountOnScopeExit() {
-    // Implement here...
+      auto varsCount = 0;
+      if (co->locals.size() > 0) {
+          while (co->locals.back().scopeLevel == co->scopeLevel) {
+              co->locals.pop_back();
+              varsCount++;
+          }
+      }
+      return varsCount;
   }
 
   /**
@@ -306,7 +469,8 @@ class EvaCompiler {
    * Allocates a boolean constant.
    */
   size_t booleanConstIdx(bool value) {
-    // Implement here...
+      ALLOC_CONST(IS_BOOLEAN, AS_BOOLEAN, BOOLEAN, value);
+      return co->constants.size() - 1;
   }
 
   /**

@@ -125,8 +125,31 @@
 
 // -----------------------------------------------------------
 
+#define OP_STR(op)	\
+case OP_##op:		\
+	return #op
+
 std::string opcodeToString(uint8_t opcode) {
-  // Implement here...
+	switch (opcode) {
+		OP_STR(HALT);
+		OP_STR(CONST);
+		OP_STR(ADD);
+		OP_STR(SUB);
+		OP_STR(MUL);
+		OP_STR(DIV);
+		OP_STR(COMPARE);
+		OP_STR(JMP_IF_FALSE);
+		OP_STR(JMP);
+		OP_STR(GET_GLOBAL);
+		OP_STR(SET_GLOBAL);
+		OP_STR(POP);
+		OP_STR(GET_LOCAL);
+		OP_STR(SET_LOCAL);
+		OP_STR(SCOPE_EXIT);
+		default:
+			DIE << "opcodeToString: unknown opcode: " << std::hex << (int)opcode;
+	}
+	return "Unknown"; //Unreachable
 }
 
 #endif

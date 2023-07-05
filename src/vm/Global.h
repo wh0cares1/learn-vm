@@ -19,7 +19,8 @@
  * Global var.
  */
 struct GlobalVar {
-  // Implement here...
+    std::string name;
+    EvaValue value;
 };
 
 /**
@@ -35,14 +36,23 @@ struct Global {
    * Sets a global.
    */
   void set(size_t index, const EvaValue& value) {
-    // Implement here...
+    if (index >= globals.size()) {
+        DIE << "Global " << index << " doesn't exist.";
+    }
+    globals[index].value = value;
   }
 
   /**
    * Registers a global.
    */
   void define(const std::string& name) {
-    // Implement here...
+      auto index = getGlobalIndex(name);
+      // Already defined
+      if (index != -1) {
+          return;
+      }
+      // Set to default number 0
+      globals.push_back({ name, NUMBER(0) });
   }
 
   /**
@@ -57,14 +67,24 @@ struct Global {
    * Adds a global constant.
    */
   void addConst(const std::string& name, double value) {
-    // Implement here...
+      if (exists(name)) {
+          return;
+      }
+      globals.push_back({ name, NUMBER(value) });
   }
 
   /**
    * Get global index.
    */
   int getGlobalIndex(const std::string& name) {
-    // Implement here...
+      if (globals.size() > 0) {
+          for (auto i = (int)globals.size() - 1; i >= 0; i--) {
+              if (globals[i].name == name) {
+                  return i;
+              }
+          }
+      }
+      return -1;
   }
 
   /**
