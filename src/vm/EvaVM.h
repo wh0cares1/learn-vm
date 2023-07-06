@@ -111,7 +111,12 @@ do {                                \
  * Stack frame for function calls.
  */
 struct Frame {
-  // Implement here...
+  // Return address of the caller (ip of the caller)
+  uint8_t* ra;
+  // Base pointer of the caller
+  EvaValue* bp;
+  // Reference to the running function
+  FunctionObject* fn;
 };
 
 // --------------------------------------------------
@@ -253,7 +258,9 @@ class EvaVM {
    */
   EvaValue eval() {
     for (;;) {
-        switch (READ_BYTE()) {
+        // dumpStack();
+        auto opcode = READ_BYTE();
+        switch (opcode) {
             case OP_HALT;
                 return pop();
             case OP_CONST;
@@ -307,7 +314,7 @@ class EvaVM {
             }
             case OP_SET_GLOBAL: {
                 auto globalIndex = READ_BYTE();
-                auto value = peek(0);
+                auto value = pop(0);
                 global->set(globalIndex, value);
                 break;
             }
@@ -342,6 +349,42 @@ class EvaVM {
                 popN(count);
                 break;
             }
+            case OP_CALL: {
+                auto argsCount = READ_BYTE();
+                auto fnValue = peek(argsCount);
+                // 1. Native function
+                if (IS_NATIVE(fnValue)) {
+                    AS_NATIVE(fnValue)->function();
+                    auto result = pop();
+                    // Pop args and function
+                    popN(argsCount + 1);
+                    // Put result back on top
+                    push(result);
+                    break;
+                }
+                // 2. User-defined function:
+                auto callee = AS_FUNCTION(fnValue);
+                // Save execution context, restored on OP_RETURN
+                callStack.push(Frame(ip, bp, fn));
+                // To access locals, etc:
+                fn = callee;
+                // Set the base (frame) pointer for the callee
+                bp = sp - argsCount - 1;
+                // Jump to the function code
+                ip = &callee->co->code[0];
+                break;
+            }
+            // Return from function
+            case OP_RETURN: {
+                //Restore the caller address
+                auto callerFrame = callStack.top();
+                // Restore ip, bp and fn for caller
+                ip = callerFrame.ra;
+                bp = callerFrame.bp;
+                fn = callerFrame.fn;
+                callStack.pop();
+                break;
+            }
             default:
                 DIE << "Unkown Opcode: " << std::hex << opcode;
       }
@@ -352,8 +395,25 @@ class EvaVM {
    * Sets up global variables and function.
    */
   void setGlobalVariables() {
-      global->addConst("x", 10);
-      global->addConst("y", 20);
+      // Native square function
+      global->addNativeFunction(
+          "native-square",
+          [&]() {
+              auto x = AS_NUMBER(peek(0));
+              push(NUMBER(x * x));
+          },
+          1);
+      // Native sum function
+      global->addNativeFunction(
+          "sum",
+          [&]() {
+              auto v2 = AS_NUMBER(peek(0));
+              auto v1 = AS_NUMBER(peek(1));
+              push(NUMBER(v1 + v2));
+          },
+          2);
+      // Global variable
+      global->addConst("VERSION", 1);
   }
 
   /**
@@ -413,7 +473,15 @@ class EvaVM {
    * Dumps current stack.
    */
   void dumpStack() {
-    // Implement here...
+      std::cout << "\n---------- Stack ----------\n";
+      if (sp == stack.begin()) {
+          std::cout << "(empty)";
+      }
+      auto csp = sp - 1;
+      while (csp >= stack.begin()) {
+          std::cout << *csp-- << "\n";
+      }
+      std::cout << "\n";
   }
 };
 

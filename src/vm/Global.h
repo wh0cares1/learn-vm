@@ -60,7 +60,10 @@ struct Global {
    */
   void addNativeFunction(const std::string& name, std::function<void()> fn,
                          size_t arity) {
-    // Implement here...
+      if (exists(name)) {
+          return;
+      }
+      globals.push_back({name, ALLOC_NATIVE(fn, name, arity)});
   }
 
   /**

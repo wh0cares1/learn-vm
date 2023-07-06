@@ -135,7 +135,17 @@ using NativeFn = std::function<void()>;
  * Native function.
  */
 struct NativeObject : public Object {
-  // Implement here...
+  NativeObject(NativeFn function, const std::string& name, size_t arity)
+      : Object(ObjectType::NATIVE),
+        function(function),
+        name(name),
+        arity(arity){}
+  // Native function
+  NativeFn function;
+  // Function name
+  std::string name;
+  // Number of parameters
+  size_t arity;
 };
 
 // ----------------------------------------------------------------
@@ -184,9 +194,12 @@ struct LocalVar {
  * state needed for function execution.
  */
 struct CodeObject : public Object {
-    CodeObject(const std::string& name) : Object(ObjectType::CODE), name(name) {}
+    CodeObject(const std::string& name, size_t arity) 
+        : Object(ObjectType::CODE), name(name), arity(arity) {}
     // Name of the unit (usually function name)
     std::string name;
+    // Number of parameters
+    size_t arity;
     // Constant pool
     std::vector<EvaValue> constants;
     // Bytecode
@@ -198,6 +211,10 @@ struct CodeObject : public Object {
     // Adds a local with current scope level
     void addLocal(const std::string& name) {
         locals.push_back({ name, scopeLevel });
+    }
+    // Adds a constant
+    void addConst(const EvaValue& value) {
+        constants.push_back(value);
     }
     // Get global index
     int getLocalIndex(const std::string& name) {
@@ -229,7 +246,9 @@ struct CellObject : public Object {
  * Function object.
  */
 struct FunctionObject : public Object {
-  // Implement here...
+  FunctionObject(CodeObject* co) : Object(ObjectType::FUNCTION), co(co) {}
+  // Reference to the code object: contains function code, locals, etc.
+  CodeObject* co;
 };
 
 // ----------------------------------------------------------------
@@ -238,9 +257,13 @@ struct FunctionObject : public Object {
 #define NUMBER(value) ((EvaValue){EvaValueType::NUMBER, .number = value})
 #define BOOLEAN(value) ((EvaValue){EvaValueType::BOOLEAN, .boolean = value})
 
-#define ALLOC_STRING(value) ((EvaValue){EvaValueType::OBJECT, .object = (Object*) new StringObhect(value)})
+#define ALLOC_STRING(value) ((EvaValue){EvaValueType::OBJECT, .object = (Object*)new StringObhect(value)})
 
-#define ALLOC_CODE(name) ((EvaValue){EvaValueType::OBJECT, .object = (Object*) new CodeObject(name)})
+#define ALLOC_CODE(name, arity) ((EvaValue){EvaValueType::OBJECT, .object = (Object*)new CodeObject(name)})
+
+#define ALLOC_NATIVE(fn, name, arity) ((EvaValue){EvaValueType::OBJECT, .object = (Object*)new NativeObject(fn, name, arity)})
+
+#define ALLOC_FUNCTION(co) ((EvaValue){EvaValueType::OBJECT, .object = (Object*)new FunctionObject(co)})
 
 // ----------------------------------------------------------------
 // Accessors:
@@ -251,6 +274,8 @@ struct FunctionObject : public Object {
 #define AS_STRING(evaValue) ((StringObject*)(evaValue).object)
 #define AS_CPPSTRING(evaValue) (AS_STRING(evaValue)->string)
 #define AS_CODE(evaValue) ((CodeObject*)(evaValue).object)
+#define AS_NATIVE(evaValue) ((NativeObject*)(evaValue).object)
+#define AS_FUNCTION(evaValue) ((FunctionObject*)(evaValue).object)
 
 // ----------------------------------------------------------------
 // Testers:
@@ -261,6 +286,8 @@ struct FunctionObject : public Object {
 #define IS_OBJECT_TYPE(evaValue, objectType) IS_OBJECT(evaValue) && AS_OBJECT(evaValue)->type == objectType
 #define IS_STRING(evaValue) IS_OBJECT_TYPE(evaValue, ObjectType::STRING)
 #define IS_CODE(evaValue) IS_OBJECT_TYPE(evaValue, ObjectType::CODE)
+#define IS_NATIVE(evaValue) IS_OBJECT_TYPE(evaValue, ObjectType::NATIVE)
+#define IS_FUNCTION(evaValue) IS_OBJECT_TYPE(evaValue, ObjectType::FUNCTION)
 
 // ----------------------------------------------------------------
 
@@ -276,6 +303,10 @@ std::string evaValueToTypeString(const EvaValue& evaValue) {
       return "STRING";
   } else if (IS_CODE(evaValue)) {
       return "CODE";
+  } else if (IS_NATIVE(evaValue)) {
+      return "NATIVE";
+  } else if (IS_FUNCTION(evaValue)) {
+      return "FUNCTION";
   } else {
       DIE << "evaValueToTypeString: unknown type " << (int)evaValue.type;
   }
@@ -298,7 +329,15 @@ std::string evaValueToConstantString(const EvaValue& evaValue) {
     }
     else if (IS_CODE(evaValue)) {
         auto code = AS_CODE(evaValue);
-        ss << "code " << code << ": " << code->name;
+        ss << "code " << code << ": " << code->name << "/" << code->arity;
+    }
+    else if (IS_FUNCTION(evaValue)) {
+        auto fn = AS_FUNCTION(evaValue);
+        ss << fn->co->name << "/" << fn->co->arity;
+    }
+    else if (IS_NATIVE(evaValue)) {
+        auto code = AS_NATIVE(evaValue);
+        ss << fn->name << "/" << fn->arity;
     }
     else {
         DIE << "evaValueToConstantString: unknown type " << (int)evaValue.type;

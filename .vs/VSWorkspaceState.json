@@ -9,6 +9,6 @@
     "\\src\\parser",
     "\\src\\vm"
   ],
-  "SelectedNode": "\\README.md",
+  "SelectedNode": "\\src\\bytecode\\OpCode.h",
   "PreviewInSolutionExplorer": false
 }

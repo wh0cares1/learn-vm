@@ -25,6 +25,8 @@
 #include "../vm/Global.h"
 #include "Scope.h"
 
+ // -----------------------------------------------------------------
+
 // Allocates new constant in the pool
 #define ALLOC_CONST(tester, converter, allocator, value)    \
 do {                                                        \
@@ -36,7 +38,7 @@ do {                                                        \
             return 1;                                       \
         }                                                   \
     }                                                       \
-    co->constants.push_back(ALLOC_STRING(value));           \
+    co->addConst(ALLOC_STRING(value));           \
 } while (false)
 
 // Generic binary operator
@@ -46,6 +48,16 @@ do {                        \
     gen(exp.list[2]);       \
     emit(op);               \
 } while (false)
+
+#define FUNCTION_CALL(exp)                          \
+do (                                                \
+    gen(exp.list[0]);                               \
+    for (auto i = 0; i < exp.list.size(); i++) {    \
+        gen(exp.list[i]);                           \
+    }                                               \
+    emit(OP_CALL);                                  \
+    emit(exp.list.size() - 1);                      \
+) while (false)
 
 // -----------------------------------------------------------------
 
@@ -63,12 +75,12 @@ class EvaCompiler {
    */
   void compile(const Exp& exp) {
       // Allocate new code object
-      co = AS_CODE(ALLOC_CODE("main"));
+      co = AS_CODE(createCodeObjectValue("main"));
+      main = AS_FUNCTION(ALLOC_FUNCTION(co));
       // Generate recursively from top level
       gen(exp)
       // Explicit VM-stop marker
       emit(OP_HALT);
-      return co;
   }
 
   /**
@@ -225,8 +237,19 @@ class EvaCompiler {
           }
           else if (op == "var") {
               auto varName = exp.list[1].string;
-              // Initializer
-              gen(exp.list[2]);
+              // Special treatment of (var foo (lambda ...)) to capture function name from variable
+              if (isLambda(exp.list[2])) {
+                  compileFunction(
+                      /* exp */ exp.list[2],
+                      /* name */ varName,
+                      /* params */ exp.list[2].list[1],
+                      /* body */ exp.list[2].list[2]);
+              }
+              else {
+                  // Initializer
+                  gen(exp.list[2]);
+              }
+              
               // 1. Global vars
               if (isGlobalScope()){
                   global->define(varName);
@@ -236,8 +259,6 @@ class EvaCompiler {
               // 2. Local vars :
               else {
                   co->addLocal(varName);
-                  emit(OP_SET_LOCAL);
-                  emit(co->getLocalIndex(varName));
               }
           }
           else if (op == "set") {
@@ -271,15 +292,45 @@ class EvaCompiler {
                   // The value of last expression is kept on the stack as the final result
                   bool isLast = i == exp.list.size() - 1;
                   // Local variable or function (should not pop)
-                  auto isLocalDeclaration =
-                      isDeclaration(exp.list[i]) && !isGlobalScope();
+                  auto isDecl = isDeclaration(exp.list[i]);
                   // Generate expression code
                   gen(exp.list[i]);
-                  if (!isLast && !isLocalDeclaration) {
+                  if (!isLast && !isDecl) {
                       emit(OP_POP);
                   }
               }
               scopeExit();
+          }
+          else if (op == "def") {
+              auto fnName = exp.list[1].string;
+
+              compileFunction(
+                  /* exp */ exp,
+                  /* name */ fnName,
+                  /* params */ exp.list[2],
+                  /* body */ exp.list[3]);
+
+              // Define the function as a variable in our co
+              if (isGlobalScope()) {
+                  global->define(fnName);
+                  emit(OP_SET_GLOBAL);
+                  emit(global->getGlobalIndex(fnName));
+              } else {
+                  co->addLocal(fnName);
+                  // NOTE: no need to explicit "set" the var value, since the
+                  //function is already on the stack at the needed slot
+              }
+          }
+          else if (op == "lambda") {
+              compileFunction(
+                  /* exp */ exp,
+                  /* name */ "lambda",
+                  /* params */ exp.list[1],
+                  /* body */ exp.list[2]);
+          }
+          else {
+              // Named function calls
+              FUNCTION_CALL(exp);
           }
         }
 
@@ -287,11 +338,10 @@ class EvaCompiler {
         // Lambda function calls:
         //
         // ((lambda (x) (* x x)) 2)
-
         else {
-          // Implement here...
+            // Inline lambda call
+            FUNCTION_CALL(exp);
         }
-
         break;
     }
   }
@@ -337,8 +387,12 @@ class EvaCompiler {
   void scopeExit() { 
       // Pop vars from the stack if they were declared within this specific scope.
       auto varsCount = getVarsCountOnScopeExit();
-      if (varsCount > 0) {
+      if (varsCount > 0 || co->arity > 0) {
           emit(OP_SCOPE_EXIT);
+          // For functions do callee cleanup: pop all arguments plus the function name
+          if (isFunctionBody()) {
+              varsCount += co->arity + 1;
+          }
           emit(varsCount);
       }
       co->scopeLevel--; 
@@ -349,14 +403,50 @@ class EvaCompiler {
    */
   void compileFunction(const Exp& exp, const std::string fnName,
                        const Exp& params, const Exp& body) {
-    // Implement here...
+      auto arity = params.list.size();
+      // Save previous code object
+      auto prevCo = co;
+      // Function code object
+      auto coValue = createCodeObjectValue(fnName, arity);
+      co = AS_CODE(coValue);
+      // Store new co as a constant
+      prevCo->constants.push_back(coValue);
+      // Function name is registered as a local, so the function can call itself recursively.
+      co->addLocal(fnName);
+      // Parameters are added as variables
+      for (auto i = 0; i < arity; i++) {
+          auto argName = params.list[i].string;
+          co->addLocal(argName);
+      }
+      // Compile body in the new code object
+      gen(body);
+      // If we don't have explicit block which pops locals, we should pop arguments (if any) - callee cleanup
+      // + 1 is for the function itself which is set as a local
+      if (!isBlock(body)) {
+          emit(OP_SCOPE_EXIT);
+          emit(arity + 1);
+      }
+      // Explicit return to restore caller address
+      emit(OP_RETURN);
+      // Create the function
+      auto fn = ALLOC_FUNCTION(co);
+      // Restore the code object
+      co = prevCo;
+      // Add function as a constant to our co
+      co->addConst(fn);
+      // And emit code for this new constant
+      emit(OP_CONST);
+      emit(co->constants.size() - 1);
   }
 
   /**
    * Creates a new code object.
    */
   EvaValue createCodeObjectValue(const std::string& name, size_t arity = 0) {
-    // Implement here...
+      auto coValue = ALLOC_CODE(name, arity);
+      auto co = AS_CODE(codeValue);
+      codeObjects_.push_back(co);
+      return coValue;
   }
 
   /**
