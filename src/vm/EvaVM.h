@@ -340,6 +340,42 @@ class EvaVM {
                 bp[localIndex] = value;
                 break;
             }
+            // Cell value
+            case OP_GET_CELL: {
+                auto cellIndex = READ_BYTE();
+                push(fn->cells[cellIndex]->value);
+                break;
+            }
+            case OP_SET_CELL: {
+                auto cellIndex = READ_BYTE();
+                auto value = peek(0);
+                // Allocate the cell if it's not there yet
+                if (fn->cells.size() <= cellIndex) {
+                    fn->cells.push_back(AS_CELL(ALLOC_CELL(value)));
+                }
+                else {
+                    // Update the cell
+                    fn->cells[cellIndex]->value = value;
+                }
+                break;
+            }
+            case OP_LOAD_CELL: {
+                auto cellIndex = READ_BYTE();
+                push(CELL(fn->cells[cellIndex]));
+                break;
+            }
+            case OP_MAKE_FUNCTION: {
+                auto co = AS_CODE(pop());
+                auto cellsCount = READ_BYTE();
+                auto fnValue = ALLOC_FUNCTION(co);
+                auto fn = AS_FUNCTION(fnValue);
+                // Capture
+                for (auto i = 0; i < cellsCount; i++) {
+                    fn->cells.push_back(AS_CELL(pop()));
+                }
+                push(fnValue);
+                break;
+            }
             case OP_SCOPE_EXIT: {
                 // How many vars to pop
                 auto count = READ_BYTE();
@@ -368,6 +404,9 @@ class EvaVM {
                 callStack.push(Frame(ip, bp, fn));
                 // To access locals, etc:
                 fn = callee;
+                // Shrink the cells vector to the size of only free vars, since other (own) cells should be
+                // reallocated for each invocation
+                fn->cells.resize(fn->co->freeCount);
                 // Set the base (frame) pointer for the callee
                 bp = sp - argsCount - 1;
                 // Jump to the function code

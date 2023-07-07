@@ -208,6 +208,10 @@ struct CodeObject : public Object {
     size_t scopeLevel = 0;
     // Local variables and functions
     std::vector<LocalVar> locals;
+    // Cell var names
+    std::vector<std::string> cellNames;
+    // Free vars count
+    size_t freeCount = 0;
     // Adds a local with current scope level
     void addLocal(const std::string& name) {
         locals.push_back({ name, scopeLevel });
@@ -227,6 +231,17 @@ struct CodeObject : public Object {
         }
         return -1;
     }
+    // Get cell index
+    int getCellIndex(const std::string& name) {
+        if (locals.size() > 0) {
+            for (auto i = (int)cellNames.size() - 1; i >= 0; i--) {
+                if (cellNames[i] == name) {
+                    return i;
+                }
+            }
+        }
+        return -1;
+    }
 };
 
 // ----------------------------------------------------------------
@@ -237,7 +252,8 @@ struct CodeObject : public Object {
  * Used to capture closured variables.
  */
 struct CellObject : public Object {
-  // Implement here...
+  CellObject(EvaValue value) : Object(ObjectType::CELL), value(value) {}
+  EvaValue value;
 };
 
 // ----------------------------------------------------------------
@@ -249,6 +265,8 @@ struct FunctionObject : public Object {
   FunctionObject(CodeObject* co) : Object(ObjectType::FUNCTION), co(co) {}
   // Reference to the code object: contains function code, locals, etc.
   CodeObject* co;
+  // Captured cells (for closures)
+  std::vector<CellObject*> cells;
 };
 
 // ----------------------------------------------------------------
@@ -265,6 +283,10 @@ struct FunctionObject : public Object {
 
 #define ALLOC_FUNCTION(co) ((EvaValue){EvaValueType::OBJECT, .object = (Object*)new FunctionObject(co)})
 
+#define ALLOC_CELL(evaValue) ((EvaValue){EvaValueType::OBJECT, .object = (Object*)new CellObject(evaValue)})
+
+#define CELL(cellObject) OBJECT((Object*)cellObject)
+
 // ----------------------------------------------------------------
 // Accessors:
 
@@ -276,6 +298,7 @@ struct FunctionObject : public Object {
 #define AS_CODE(evaValue) ((CodeObject*)(evaValue).object)
 #define AS_NATIVE(evaValue) ((NativeObject*)(evaValue).object)
 #define AS_FUNCTION(evaValue) ((FunctionObject*)(evaValue).object)
+#define AS_CELL(evaValue) ((CellObject*)(evaValue).object)
 
 // ----------------------------------------------------------------
 // Testers:
@@ -288,6 +311,7 @@ struct FunctionObject : public Object {
 #define IS_CODE(evaValue) IS_OBJECT_TYPE(evaValue, ObjectType::CODE)
 #define IS_NATIVE(evaValue) IS_OBJECT_TYPE(evaValue, ObjectType::NATIVE)
 #define IS_FUNCTION(evaValue) IS_OBJECT_TYPE(evaValue, ObjectType::FUNCTION)
+#define IS_CELL(evaValue) IS_OBJECT_TYPE(evaValue, ObjectType::CELL)
 
 // ----------------------------------------------------------------
 
@@ -307,6 +331,8 @@ std::string evaValueToTypeString(const EvaValue& evaValue) {
       return "NATIVE";
   } else if (IS_FUNCTION(evaValue)) {
       return "FUNCTION";
+  } else if (IS_CELL(evaValue)) {
+      return "CELL";
   } else {
       DIE << "evaValueToTypeString: unknown type " << (int)evaValue.type;
   }
@@ -338,6 +364,10 @@ std::string evaValueToConstantString(const EvaValue& evaValue) {
     else if (IS_NATIVE(evaValue)) {
         auto code = AS_NATIVE(evaValue);
         ss << fn->name << "/" << fn->arity;
+    }
+    else if (IS_CELL(evaValue)) {
+        auto code = AS_CELL(evaValue);
+        ss << "cell: " << evaValueToConstantString(cell->value);
     }
     else {
         DIE << "evaValueToConstantString: unknown type " << (int)evaValue.type;

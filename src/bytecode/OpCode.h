@@ -148,6 +148,10 @@ std::string opcodeToString(uint8_t opcode) {
 		OP_STR(SCOPE_EXIT);
 		OP_STR(CALL);
 		OP_STR(RETURN);
+		OP_STR(GET_CELL);
+		OP_STR(SET_CELL);
+		OP_STR(LOAD_CELL);
+		OP_STR(MAKE_FUNCTION);
 		default:
 			DIE << "opcodeToString: unknown opcode: " << std::hex << (int)opcode;
 	}

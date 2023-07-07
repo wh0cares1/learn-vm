@@ -77,8 +77,10 @@ class EvaCompiler {
       // Allocate new code object
       co = AS_CODE(createCodeObjectValue("main"));
       main = AS_FUNCTION(ALLOC_FUNCTION(co));
+      // Scope analysis
+      analyze(exp);
       // Generate recursively from top level
-      gen(exp)
+      gen(exp);
       // Explicit VM-stop marker
       emit(OP_HALT);
   }
@@ -87,7 +89,75 @@ class EvaCompiler {
    * Scope analysis.
    */
   void analyze(const Exp& exp, std::shared_ptr<Scope> scope) {
-    // Implement here...
+      switch (exp.type) {
+          if (exp.type == ExpType::Symbol) {
+              if (exp.string == "true" || exp.string == "false") {
+                  // Do nothing
+              }
+              else {
+                  // Variables
+                  scope->maybePromote(exp.string);
+              }
+          }
+          // Lists
+          else if (exp.type == ExpType::LIST) {
+              auto tag = exp.list[0];
+              // Special cases
+              if (tag.type == ExpType::SYMBOL) {
+                  auto op = tag.string;
+                  // Block scope
+                  if (op == "begin") {
+                      auto newScope = std::make_error_code_shared<Scope>(
+                          scope == nullptr ? ScopeType::GLOBAL : ScopeType::BLOCK, scope);
+                      scopeInfo_[&exp] = newScope;
+                      for (auto i = 1; i < exp.list.size(); ++i) {
+                          analyze(exp.list[i], newScope);
+                      }
+                  }
+                  // Variable declaration
+                  else if (op == "var") {
+                      scope->addLocal(exp.list[1].string);
+                      analyze(exp.list[2], scope);
+                  }
+                  // Function declaration
+                  else if (op == "def") {
+                      auto fnName = exp.list[1].string;
+                      scope->addLocal(fnName);
+                      auto newScope = std::make_shared<Scope>(ScopeType::FUNCTION, scope);
+                      scopeInfo_[&exp] = newScope;
+                      newScope->addLocal(fnName);
+                      auto arity = exp.list[2].list.size();
+                      // Params
+                      for (auto i = 0; i < arity; i++) {
+                          newScope->addLocal(exp.list[2].list[i].string);
+                      }
+                      // Body
+                      analyze(exp.list[3], newScope);
+                  }
+                  else if (op == "lambda") {
+                      auto newScope = std::make_shared<Scope>(ScopeType::FUNCTION, scope);
+                      scopeInfo_[&exp] = newScope;
+                      auto arity = exp.list[2].list.size();
+                      // Params
+                      for (auto i = 0; i < arity; i++) {
+                          newScope->addLocal(exp.list[1].list[i].string);
+                      }
+                      // Body
+                      analyze(exp.list[2], newScope);
+                  }
+                  else {
+                      for (auto i = 1; i < exp.list.size(); i++) {
+                          analyze(exp.list[i], scope);
+                      }
+                  }
+              }
+              else {
+                  for (auto i = 0; i < exp.list.size(); ++i) {
+                      analyze(exp.list[i], scope);
+                  }
+              }
+          }
+      }
   }
 
   /**
@@ -127,18 +197,22 @@ class EvaCompiler {
         } else {
           // Variables:
           auto varName = exp.string;
+          auto opCodeGetter = scopeStack_.top()->getNameGetter(varName);
+          emit(opCodeGetter);
           // 1. Local vars
-          auto localIndex = co->getLocalIndex(varName);
-          if (localIndex != -1) {
-              emit(OP_GET_LOCAL);
-              emit(localIndex);
-          }
+          if (opCodeGetter == OP_GET_LOCAL) {
+              emit(co->getLocalIndex(varName);
+          } 
           // 2. Global vars
+          else if (opCodeGetter == OP_GET_CELL) {
+              emit(co->getCellIndex(varName);
+
+          }
+          // 3. Global vars
           else {
               if (!global->exists(varName)) {
                   DIE << "[EvaCompiler]: Reference error: " << varName;
               }
-              emit(OP_GET_GLOBAL);
               emit(global->getGlobalIndex(varName));
           }
         }
@@ -237,6 +311,7 @@ class EvaCompiler {
           }
           else if (op == "var") {
               auto varName = exp.list[1].string;
+              auto opCodeSetter = scopeStack_.top()->getNameSetter(varName);
               // Special treatment of (var foo (lambda ...)) to capture function name from variable
               if (isLambda(exp.list[2])) {
                   compileFunction(
@@ -249,30 +324,40 @@ class EvaCompiler {
                   // Initializer
                   gen(exp.list[2]);
               }
-              
               // 1. Global vars
-              if (isGlobalScope()){
+              if (opCodeSetter == OP_SET_GLOBAL){
                   global->define(varName);
                   emit(OP_SET_GLOBAL);
                   emit(global->getGlobalIndex(varName));
               }
-              // 2. Local vars :
+              // 2. Cells
+              else if (opCodeSetter == OP_SET_CELL) {
+                  co->cellNames.push_back(varName);
+                  emit(OP_SET_CELL);
+                  // Explicitly pop the value from the stack, since it's promoted to the heap
+                  emit(OP_POP);
+              }
+              // 3. Local vars
               else {
                   co->addLocal(varName);
               }
           }
           else if (op == "set") {
               auto varName = exp.list[1].string;
+
+              auto opCoderSetter = scopeStack_.top()->getNameSetter(varName);
               
               // Initializer
               gen(exp.list[2]);
 
               // 1. Local vars
-              auto localIndex = co->getLocalIndex(varName);
-
-              if (localIndex != -1) {
+              if (opCoderSetter == OP_SET_LOCAL) {
                   emit(OP_SET_LOCAL);
-                  emit(localIndex);
+                  emit(co->getLocalIndex(varName));
+              }
+              else if (opCoderSetter == OP_SET_CELL) {
+                  emit(OP_SET_CELL);
+                  emit(co->getCellIndex(varName));
               }
               // 2. Global vars
               else {
@@ -286,7 +371,8 @@ class EvaCompiler {
           }
           // Blocks
           else if (op == "begin") {
-              scopeEnter();
+              scopeStack_.push(scopeInfo_.at(&exp));
+              blockEnter();
               // Compile each expression within the block
               for (auto i = 1; i < exp.list.size(); i++) {
                   // The value of last expression is kept on the stack as the final result
@@ -299,7 +385,8 @@ class EvaCompiler {
                       emit(OP_POP);
                   }
               }
-              scopeExit();
+              blockExit();
+              scopeStack_.pop();
           }
           else if (op == "def") {
               auto fnName = exp.list[1].string;
@@ -403,20 +490,34 @@ class EvaCompiler {
    */
   void compileFunction(const Exp& exp, const std::string fnName,
                        const Exp& params, const Exp& body) {
+      auto scopeInfo = scopeInfo_.at(&exp);
+      scopeStack_.push(scopeInfo);
       auto arity = params.list.size();
       // Save previous code object
       auto prevCo = co;
       // Function code object
       auto coValue = createCodeObjectValue(fnName, arity);
       co = AS_CODE(coValue);
+      // Put 'free' and 'cells' from the scope into the cellNames of the code object
+      co->freeCount = scopeInfo->free.size();
+      co->cellNames.reserve(scopeInfo->free.size() + scopeInfo->cells.size());
+      co->cellNames.insert(co->cellNames.end(), scopeInfo->free.begin(), scopeInfo->free.end());
+      co->cellNames.insert(co->cellNames.end(), scopeInfo->cells.begin(), scopeInfo->cells.end());
       // Store new co as a constant
-      prevCo->constants.push_back(coValue);
+      prevCo->constants(coValue);
       // Function name is registered as a local, so the function can call itself recursively.
       co->addLocal(fnName);
       // Parameters are added as variables
       for (auto i = 0; i < arity; i++) {
           auto argName = params.list[i].string;
           co->addLocal(argName);
+          // Note: if the param is captured by cell, emit the code for it.
+          // We also don't pop the param value in this case, since OP_SCOPE_EXIT would pop it.
+          auto cellIndex = co->getCellIndex(argName);
+          if (cellIndex != -1) {
+              emit(OP_SET_CELL);
+              emit(cellIndex);
+          }
       }
       // Compile body in the new code object
       gen(body);
@@ -428,15 +529,41 @@ class EvaCompiler {
       }
       // Explicit return to restore caller address
       emit(OP_RETURN);
-      // Create the function
-      auto fn = ALLOC_FUNCTION(co);
-      // Restore the code object
-      co = prevCo;
-      // Add function as a constant to our co
-      co->addConst(fn);
-      // And emit code for this new constant
-      emit(OP_CONST);
-      emit(co->constants.size() - 1);
+
+      // 1. Simple function allocated at compile time
+      // If it's not a closure (doesn't have free variables) allocate it at compile time and store as a constant
+      // Closure are allocated at runtime, but reuse the same code object
+      if (scopeInfo->free.size() == 0) {
+          // Create the function
+          auto fn = ALLOC_FUNCTION(co);
+          // Restore the code object
+          co = prevCo;
+          // Add function as a constant to our co
+          co->addConst(fn);
+          // And emit code for this new constant
+          emit(OP_CONST);
+          emit(co->constants.size() - 1);
+      }
+      // 2. Closures 
+      // - Load all free vars to capture (indices are taken from the 'cells' of the parent co)
+      // - Load code object for the current function
+      // - Make function
+      else {
+          // Restore the code object
+          co = prevCo;
+          for (const auto& freeVar : scopeInfo->free) {
+              emit(OP_LOAD_CELL);
+              emit(prevCo->getCellIndex(freeVar));
+          }
+          // Load code object
+          emit(OP_CONST);
+          emit(co->constants.size() - 1);
+          // Create the function
+          emit(OP_MAKE_FUNCTION);
+          // How many cells to capture
+          emit(scopeInfo->free.size());
+      }
+      scopeStack_.pop();
   }
 
   /**
@@ -458,7 +585,17 @@ class EvaCompiler {
    * Exits a block.
    */
   void blockExit() {
-    // Implement here...
+      // Pop vars from the stack if they were declared within this specific scope
+      auto varsCount = getVarsCountOnScopeExit();
+      if (varsCount > 0 || co->arity > 0) {
+          emit(OP_SCOPE_EXIT);
+          // For functions do callee cleanup: pop all arguments plus the function name
+          if (isFunctionBody()) {
+              varsCount += co->arity + 1;
+          }
+          emit(varsCount);
+      }
+      co->scopeLevel--;
   }
 
   /**

@@ -9,6 +9,6 @@
     "\\src\\parser",
     "\\src\\vm"
   ],
-  "SelectedNode": "\\src\\bytecode\\OpCode.h",
+  "SelectedNode": "\\src\\compiler\\Scope.h",
   "PreviewInSolutionExplorer": false
 }
