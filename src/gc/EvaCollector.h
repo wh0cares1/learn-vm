@@ -23,28 +23,61 @@ struct EvaCollector {
    * Main collection cycle.
    */
   void gc(const std::set<Traceable *> &roots) {
-    // Implement here...
+      mark(roots);
+      sweep();
   }
 
   /**
    * Marking phase (trace).
    */
   void mark(const std::set<Traceable *> &roots) {
-    // Implement here...
+      std::vector<Traceable*> worklist(roots.begin(), roots.end());
+      while (!worklist.empty()) {
+          auto object = worklist.back();
+          worklist.pop_back();
+          if (!object->marked) {
+              object->marked = true;
+              for (auto& p : getPointers(object)) {
+                  worklist.push_back(p);
+              }
+          }
+      }
   }
 
   /**
    * Returns all pointers within this object.
    */
   std::set<Traceable *> getPointers(const Traceable *object) {
-    // Implement here...
+      std::set<Traceable*> pointers;
+      auto evaValue = OBJECT((Object*)object);
+      // Function cells are traced
+      if (IS_FUNCTION(evaValue)) {
+          auto fn = AS_FNCTION(evaValue);
+          for (auto& cell : fn->cells) {
+              pointers.insert((Traceable*)cell);
+          }
+      }
+      // TODO : OOP instances
+      return pointers;
   }
 
   /**
    * Sweep phase (reclaim).
    */
   void sweep() {
-    // Implement here...
+      auto it = Traceable::objects.begin();
+      while (it != Traceable::objects.end()) {
+          auto object = (Traceable*)*it;
+          if (object->marked) {
+              // Alive object, reset the mark bit for future collection cycles
+              object->marked = false;
+              ++it;
+          }
+          else {
+              it = Traceable::objects.erase(it);
+              delete(object);
+          }
+      }
   }
 };
 

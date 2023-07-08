@@ -61,28 +61,43 @@ struct Traceable {
    * Allocator.
    */
   static void* operator new(size_t size) {
-    // Implement here...
+    // Allocation a block with the header
+      void* object = ::operator new(size);
+      ((Traceable*)object)->size = size;
+
+      Traceable::objects.push_back((Traceable*)object);
+      Traceable::bytesAllocated += size;
+
+      return object;
   }
 
   /**
    * Deallocator.
    */
   static void operator delete(void* object, std::size_t sz) {
-    // Implement here...
+      Traceable::bytesAllocated -= ((Traceable*)object)->size;
+      ::operator delete(object, sz);
+      // Note: remove from Traceable::objects during GC cycle
   }
 
   /**
    * Clean up for all objects.
    */
   static void cleanup() {
-    // Implement here...
+    for (auto& object : object) {
+        delete object;
+    }
+    objects.clear();
   }
 
   /**
    * Printes memory stats
    */
   static void printStats() {
-    // Implement here...
+      std::cout << "--------------------\n";
+      std::cout << "Memory stats:\n\n";
+      std::cout << "Object allocated : " << std::dec << Traceable::objects.size() << "\n";
+      std::cout << "Bytes allocated : " << std::dec << Traceable::bytesAllocated << "\n\n";
   }
 
   /**

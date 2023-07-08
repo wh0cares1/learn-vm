@@ -77,8 +77,9 @@ class EvaCompiler {
       // Allocate new code object
       co = AS_CODE(createCodeObjectValue("main"));
       main = AS_FUNCTION(ALLOC_FUNCTION(co));
+      constantObjects_.insert((Traceable*)main);
       // Scope analysis
-      analyze(exp);
+      analyze(exp, nullptr);
       // Generate recursively from top level
       gen(exp);
       // Explicit VM-stop marker
@@ -536,6 +537,7 @@ class EvaCompiler {
       if (scopeInfo->free.size() == 0) {
           // Create the function
           auto fn = ALLOC_FUNCTION(co);
+          constantObjects_.insert((Traceable*)AS_OBJECT(fn));
           // Restore the code object
           co = prevCo;
           // Add function as a constant to our co
@@ -573,6 +575,7 @@ class EvaCompiler {
       auto coValue = ALLOC_CODE(name, arity);
       auto co = AS_CODE(codeValue);
       codeObjects_.push_back(co);
+      constantObjects_.insert((Traceable*)co);
       return coValue;
   }
 
@@ -689,6 +692,7 @@ class EvaCompiler {
    */
   size_t stringConstIdx(const std::string& value) {
       ALLOC_CONST(IS_STRING, AS_CPPSTRING, ALLOC_STRING, value);
+      constantObjects_.insert((Traceable*)co->constants.back().object);
       return co->constants.size() - 1;
   }
 

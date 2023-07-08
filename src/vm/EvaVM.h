@@ -64,7 +64,7 @@ using syntax::EvaParser;
 /**
  * Runtime allocation, can call GC.
  */
-#define MEM(allocator, ...)  // Implement here...
+#define MEM(allocator, ...) (maybeGC(), allocator(__VA_ARGS__))
 
 /**
  * Binary operation.
@@ -191,35 +191,68 @@ class EvaVM {
    * Obtains GC roots: variables on the stack, globals, constants.
    */
   std::set<Traceable*> getGCRoots() {
-    // Implement here...
+    // Stack
+      auto roots = getStackGCRoots();
+
+    // Constant pool
+      auto constantRoots = getConstantGCRoots();
+      roots.insert(constantRoots.begin(), constantRoots.end());
+    
+    // Global
+      auto globalRoots = getGlobalGCRoots();
+      root.insert(globalRoots.begin(), globalRoots.end());
+      return roots;
   }
 
   /**
    * Returns stack GC roots.
    */
   std::set<Traceable*> getStackGCRoots() {
-    // Implement here...
+      std::set<Traceable*> roots;
+      auto stackEntry = sp;
+      while (stackEntry-- != stack.begin()) {
+          if (IS_OBJECT(*stackEntry)) {
+              roots.insert((Traceable*)stackEntry->object);
+          }
+      }
+      return roots;
   }
 
   /**
    * Returns GC roots for constants.
    */
   std::set<Traceable*> getConstantGCRoots() {
-    // Implement here...
+      return compiler->getConstantObjects();
   }
 
   /**
    * Returns global GC roots.
    */
   std::set<Traceable*> getGlobalGCRoots() {
-    // Implement here...
+      std::set<Traceable*> roots;
+      for (const auto& global : global->globals) {
+          if (IS_OBJECT(global.value)) {
+              roots.insert((Traceable*)global.value.object);
+          }
+      }
+      return roots;
   }
 
   /**
    * Spawns a potential GC cycle.
    */
   void maybeGC() {
-    // Implement here...
+    if (Traceable::bytesAllocated < GC_TRESHOLD) {
+        return;
+    }
+    auto roots = getGCRoots();
+    if (roots.size() == 0) {
+        return;
+    }
+    std::cout << "---------- Before GC stats ----------\n";
+    collector->gc(roots);
+    std::cout << "---------- After GC stats ----------\n";
+    Traceable::printStats();
   }
 
   //----------------------------------------------------
@@ -266,18 +299,36 @@ class EvaVM {
             case OP_CONST;
                 push(GET_CONST());
                 break();
-            case OP_ADD;
-                BINARY_OP(+);
+            case OP_ADD: {
+                //BINARY_OP(+);
+                auto op2 = pop();
+                auto op1 = pop();
+                // Numeric addition
+                if (IS_NUMBER(op1) && IS_NUMBER(op2)) {
+                    auto v1 = AS_NUMBER(op1);
+                    auto v2 = AS_NUMBER(op2);
+                    push(NUMBER(v1 + v2));
+                }
+                // String concatenation
+                else if (IS_STRING(op1) && IS_STRING(op2)) {
+                    auto s1 = AS_CPPSTRING(op1);
+                    auto s2 = AS_CPPSTRING(op2);
+                    push(MEM(ALLOC_STRING, s1 + s2));
+                }
                 break;
-            case OP_SUB;
+            }
+            case OP_SUB: {
                 BINARY_OP(-);
                 break;
-            case OP_MUL;
+            }
+            case OP_MUL: {
                 BINARY_OP(*);
                 break;
-            case OP_DIV;
-                BINARY_OP(/);
+            }
+            case OP_DIV: {
+                BINARY_OP(/ );
                 break;
+            }
             case OP_COMPARE: {
                 auto op = READ_BYTE();
                 auto op2 = pop();
@@ -351,7 +402,7 @@ class EvaVM {
                 auto value = peek(0);
                 // Allocate the cell if it's not there yet
                 if (fn->cells.size() <= cellIndex) {
-                    fn->cells.push_back(AS_CELL(ALLOC_CELL(value)));
+                    fn->cells.push_back(AS_CELL(MEM(ALLOC_CELL, value)));
                 }
                 else {
                     // Update the cell
@@ -367,7 +418,7 @@ class EvaVM {
             case OP_MAKE_FUNCTION: {
                 auto co = AS_CODE(pop());
                 auto cellsCount = READ_BYTE();
-                auto fnValue = ALLOC_FUNCTION(co);
+                auto fnValue = MEM(ALLOC_FUNCTION, co);
                 auto fn = AS_FUNCTION(fnValue);
                 // Capture
                 for (auto i = 0; i < cellsCount; i++) {
