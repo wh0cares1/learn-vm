@@ -92,7 +92,7 @@ class EvaCompiler {
   void analyze(const Exp& exp, std::shared_ptr<Scope> scope) {
       switch (exp.type) {
           if (exp.type == ExpType::Symbol) {
-              if (exp.string == "true" || exp.string == "false") {
+              if (exp.string == "true" || exp.string == "false" || exp.string == "null") {
                   // Do nothing
               }
               else {
@@ -145,6 +145,21 @@ class EvaCompiler {
                       }
                       // Body
                       analyze(exp.list[2], newScope);
+                  }
+                  else if (op == "class") {
+                      auto className = exp.list[1].string;
+                      auto newScope = std::make_shared<Scope>(ScopeType::CLASS, scope);
+                      scopeInfo_[&exp] = newScope;
+                      scope->addLocal(className);
+                      // Class body
+                      for (auto i = 3; i < exp.list.size(); i++) {
+                          analyze(exp.list[i], newScope);
+                      }
+                  }
+                  // Property access
+                  else if (op == "prop") {
+                      // Don't touch property names as identifiers
+                      analyze(exp.list[1], scope);
                   }
                   else {
                       for (auto i = 1; i < exp.list.size(); i++) {
@@ -344,30 +359,41 @@ class EvaCompiler {
               }
           }
           else if (op == "set") {
-              auto varName = exp.list[1].string;
+              // Special case for property writes
+              if (isProp(exp.list[1])) {
+                  // Value
+                  gen(exp.list[2]);
+                  // Instance
+                  gen(exp.list[1].list[1]);
+                  // Property name
+                  emit(OP_SET_PROP);
+                  emit(stringConstIdx(exp.list[1].list[2].string));
+              } else {
+                  auto varName = exp.list[1].string;
 
-              auto opCoderSetter = scopeStack_.top()->getNameSetter(varName);
+                  auto opCoderSetter = scopeStack_.top()->getNameSetter(varName);
               
-              // Initializer
-              gen(exp.list[2]);
+                  // Initializer
+                  gen(exp.list[2]);
 
-              // 1. Local vars
-              if (opCoderSetter == OP_SET_LOCAL) {
-                  emit(OP_SET_LOCAL);
-                  emit(co->getLocalIndex(varName));
-              }
-              else if (opCoderSetter == OP_SET_CELL) {
-                  emit(OP_SET_CELL);
-                  emit(co->getCellIndex(varName));
-              }
-              // 2. Global vars
-              else {
-                  auto globalIndex = global->getGlobalIndex(varName);
-                  if (globalIndex == -1) {
-                      DIE << "Reference error: " << varName << " is not defined."
+                  // 1. Local vars
+                  if (opCoderSetter == OP_SET_LOCAL) {
+                      emit(OP_SET_LOCAL);
+                      emit(co->getLocalIndex(varName));
                   }
-                  emit(OP_SET_GLOBAL);
-                  emit(globalIndex);
+                  else if (opCoderSetter == OP_SET_CELL) {
+                      emit(OP_SET_CELL);
+                      emit(co->getCellIndex(varName));
+                  }
+                  // 2. Global vars
+                  else {
+                      auto globalIndex = global->getGlobalIndex(varName);
+                      if (globalIndex == -1) {
+                          DIE << "Reference error: " << varName << " is not defined."
+                      }
+                      emit(OP_SET_GLOBAL);
+                      emit(globalIndex);
+                  }
               }
           }
           // Blocks
@@ -399,14 +425,19 @@ class EvaCompiler {
                   /* body */ exp.list[3]);
 
               // Define the function as a variable in our co
-              if (isGlobalScope()) {
-                  global->define(fnName);
-                  emit(OP_SET_GLOBAL);
-                  emit(global->getGlobalIndex(fnName));
-              } else {
-                  co->addLocal(fnName);
-                  // NOTE: no need to explicit "set" the var value, since the
-                  //function is already on the stack at the needed slot
+
+              // Class methods are already stored on the stack
+              if (classObject_ == nullptr) {
+                  if (isGlobalScope()) {
+                      global->define(fnName);
+                      emit(OP_SET_GLOBAL);
+                      emit(global->getGlobalIndex(fnName));
+                  }
+                  else {
+                      co->addLocal(fnName);
+                      // NOTE: no need to explicit "set" the var value, since the
+                      //function is already on the stack at the needed slot
+                  }
               }
           }
           else if (op == "lambda") {
@@ -416,10 +447,85 @@ class EvaCompiler {
                   /* params */ exp.list[1],
                   /* body */ exp.list[2]);
           }
+          else if (op == "class") {
+              auto name = exp.list[1].string;
+              auto superClass = exp.list[2].string == "null"
+                  ? nullptr
+                  : getClassByName(exp.list[2].string);
+              auto cls = ALLOC_CLASS(name, superClass);
+              auto classObject = AS_CLASS(cls);
+              classObjects_.push_back(classObject);
+              // Track for GC
+              constantObjects_.insert((Traceable*)classObject);
+              // Put the class in constant pool
+              co->addConst(cls);
+              // Register set as global
+              global->define(name, cls);
+              //And pre-install to the global
+              global->set(global->getGlobalIndex(name), cls);
+              // To compile class body we set the current compiling class, so the defined methods are stored
+              // on the class
+              if (exp.list.size() > 3) {
+                  auto prevClassObject = classObject_;
+                  classObject_ = classObject;
+                  // Body
+                  scopeStack_.push(scopeInfo_.at(&exp));
+                  for (auto i = 3; i < exp.list.size(); ++i) {
+                      gen(exp.list[i]);
+                  }
+                  scopeStack_.pop();
+                  classObject_ = prevClassObject;
+              }
+              // We update constructor to explicitly return 'self' which is the argument at index 1
+              auto constrFn = AS_FUNCTION(classObject->getProp("constructor"));
+              constrFn->co->insertAtOffset(-3, OP_POP);
+              constrFn->co->insertAtOffset(-3, OP_GET_LOCAL);
+              constrFn->co->insertAtOffset(-3, 1);
+          }
+          else if (op == "new") {
+              auto className = exp.list[1].string;
+              auto cls = getClassByName(className);
+              if (cls == nullptr) {
+                  DIE << "[EvaCompiler]: Unknown class " << cls;
+              }
+              // Load class
+              emit(OP_GET_GLOBAL);
+              emit(global->getGlobalIndex(className));
+              // New instance
+              emit(OP_NEW);
+              // NOTE: After the OP_NEW, the constructor function and the created instance are on top of the stack
+              // Other arguments are pushed after 'self'
+              for (auto i = 2; i < exp.list.size(); i++) {
+                  gen(exp.list[i]);
+              }
+              // Call the constructor
+              emit(OP_CALL);
+              emit(AS_FUNCTION(cls->getProp("constructor"))->co->arity);
+          }
+          else if (op == "prop") {
+              // Instance
+              gen(exp.list[1]);
+              // Property name
+              emit(OP_GET_PROP);
+              emit(stringConstIdx(exp.list[2].string));
+          }
           else {
               // Named function calls
               FUNCTION_CALL(exp);
           }
+        }
+        else if (op == "super") {
+            auto className = exp.list[1].string;
+            auto cls = getClassByName(className);
+            if (cls == nullptr) {
+                DIE << "[EvaCompiler]: Unknown class " << cls;
+            }
+            if (cls->superClass == nullptr) {
+                DIE << "[EvaCompiler]: Class " << cls->name;
+                    << " doesn't have super class";
+            }
+            emit(OP_GET_GLOBAL);
+            emit(global->getGlobalIndex(cls->superClass->name));
         }
 
         // --------------------------------------------
@@ -497,7 +603,8 @@ class EvaCompiler {
       // Save previous code object
       auto prevCo = co;
       // Function code object
-      auto coValue = createCodeObjectValue(fnName, arity);
+      auto coValue = createCodeObjectValue(
+          classObject_ != nullptr ? (classObject_->name + "." + fnName) : fnName, arity);
       co = AS_CODE(coValue);
       // Put 'free' and 'cells' from the scope into the cellNames of the code object
       co->freeCount = scopeInfo->free.size();
@@ -521,7 +628,10 @@ class EvaCompiler {
           }
       }
       // Compile body in the new code object
+      auto prevClassObject = classObject_;
+      classObject_ = nullptr;
       gen(body);
+      classObject_ = prevClassObject;
       // If we don't have explicit block which pops locals, we should pop arguments (if any) - callee cleanup
       // + 1 is for the function itself which is set as a local
       if (!isBlock(body)) {
@@ -530,11 +640,20 @@ class EvaCompiler {
       }
       // Explicit return to restore caller address
       emit(OP_RETURN);
-
+      // Class methods are stored directly on the class
+      if (classObject_ != nullptr) {
+          // Create the function
+          auto fn = ALLOC_FUNCTION(co);
+          constantObjects_.insert((Traceable*)AS_OBJECT(fn));
+          // Restore the code object
+          co = prevCo;
+          // Add method to the class
+          classObject_->properties[fnName] = fn;
+      }
       // 1. Simple function allocated at compile time
       // If it's not a closure (doesn't have free variables) allocate it at compile time and store as a constant
       // Closure are allocated at runtime, but reuse the same code object
-      if (scopeInfo->free.size() == 0) {
+      else if (scopeInfo->free.size() == 0) {
           // Create the function
           auto fn = ALLOC_FUNCTION(co);
           constantObjects_.insert((Traceable*)AS_OBJECT(fn));
@@ -728,7 +847,12 @@ class EvaCompiler {
    * Returns a class object by name.
    */
   ClassObject* getClassByName(const std::string& name) {
-    // Implement here...
+      for (const auto& classObject : classObjects_) {
+          if (classObject->name == name) {
+              return classObject;
+          }
+      }
+      return nullptr;
   }
 
   /**

@@ -152,6 +152,9 @@ std::string opcodeToString(uint8_t opcode) {
 		OP_STR(SET_CELL);
 		OP_STR(LOAD_CELL);
 		OP_STR(MAKE_FUNCTION);
+		OP_STR(NEW);
+		OP_STR(GET_PROP);
+		OP_STR(SET_PROP);
 		default:
 			DIE << "opcodeToString: unknown opcode: " << std::hex << (int)opcode;
 	}

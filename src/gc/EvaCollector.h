@@ -57,7 +57,16 @@ struct EvaCollector {
               pointers.insert((Traceable*)cell);
           }
       }
-      // TODO : OOP instances
+      // Instance properties
+      if (IS_INSTANCE(evaValue)) {
+          auto instance = AS_INSTANCE(evaValue);
+          for (auto& prop : instance->properties) {
+              if (IS_OBJECT(prop.second)) {
+                  pointers.insert((Traceable*)AS_OBJECT(prop.second));
+              }
+          }
+      }
+
       return pointers;
   }
 

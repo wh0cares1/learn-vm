@@ -66,6 +66,7 @@ class EvaDisassembler {
         case OP_DIV:
         case OP_POP:
         case OP_RETURN;
+        case OP_NEW;
           return disassembleSimple(co, opcode, offset);
         case OP_SCOPE_EXIT:
         case OP_CALL:
@@ -89,6 +90,9 @@ class EvaDisassembler {
             return disassembleCell(co, opcode, offset);
         case OP_MAKE_FUNCTION:
             return disassembleMakeFunction(co, opcode, offset);
+        case OP_GET_PROP:
+        case OP_SET_PROP:
+            return disassembleProperty(co, opcode, offset);
         default:
             DIE << "disassembleInstruction: no disassemble for "
                 << opcodeToString(opcode);
@@ -157,7 +161,12 @@ class EvaDisassembler {
    * Disassembles property instruction.
    */
   size_t disassembleProperty(CodeObject* co, uint8_t opcode, size_t offset) {
-    // Implement here...
+      dumpBytes(co, offset, 2);
+      printOpCode(opcode);
+      auto constIndex = co->code[offset + 1];
+      std::cout << (int)constIndex << " ("
+          << AS_CPPSTRING(co->constants[constIndex]) << ")";
+      return offset + 2;
   }
 
   /**
